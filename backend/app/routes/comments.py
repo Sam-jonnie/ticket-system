@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, BackgroundTasks, Depends, status
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -16,19 +16,15 @@ def get_comment_service(db: Session = Depends(get_db)) -> CommentService:
     return CommentService(db)
 
 
-@router.post(
-    "/tickets/{ticket_id}/comments",
-    response_model=CommentResponse,
-    status_code=status.HTTP_201_CREATED,
-)
+@router.post("/tickets/{ticket_id}/comments", response_model=CommentResponse, status_code=status.HTTP_201_CREATED)
 def add_comment(
     ticket_id: uuid.UUID,
     data: CreateCommentRequest,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     service: CommentService = Depends(get_comment_service),
 ):
-    return service.add_comment(current_user, ticket_id, data.message)
-
+    return service.add_comment(current_user, ticket_id, data.message, background_tasks)
 
 @router.get("/tickets/{ticket_id}/comments", response_model=list[CommentResponse])
 def list_comments(

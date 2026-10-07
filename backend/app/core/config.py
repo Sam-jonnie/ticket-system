@@ -18,6 +18,8 @@ class Settings(BaseSettings):
         case_sensitive=False,
     )
 
+    redis_url: str = "redis://localhost:6379/0"
+
 
 @lru_cache
 def get_settings() -> Settings:

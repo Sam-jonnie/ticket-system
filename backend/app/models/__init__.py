@@ -6,6 +6,8 @@ from app.models.ticket import Ticket
 from app.models.ticket_status_history import TicketStatusHistory
 from app.models.ticket_attachment import TicketAttachment
 from app.models.ticket_comment import TicketComment
+from app.models.notification import Notification
+from app.models.audit_log import AuditLog
 
 
-__all__ = ["User", "RefreshToken", "Category", "Priority", "Ticket", "TicketStatusHistory", "TicketAttachment", "TicketComment"]
+__all__ = ["User", "RefreshToken", "Category", "Priority", "Ticket", "TicketStatusHistory", "TicketAttachment", "TicketComment", "Notification", "AuditLog"]

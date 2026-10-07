@@ -1,3 +1,4 @@
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request, status
 import uuid
 from datetime import datetime
 
@@ -27,11 +28,12 @@ def get_ticket_service(db: Session = Depends(get_db)) -> TicketService:
 @router.post("", response_model=TicketResponse, status_code=status.HTTP_201_CREATED)
 def create_ticket(
     data: CreateTicketRequest,
+    background_tasks: BackgroundTasks,
+    request: Request,
     current_user: User = Depends(get_current_user),
     service: TicketService = Depends(get_ticket_service),
 ):
-    return service.create_ticket(current_user, data)
-
+    return service.create_ticket(current_user, data, background_tasks, request.client.host)
 
 @router.get("", response_model=PaginatedTickets)
 def list_tickets(
@@ -96,11 +98,27 @@ def update_ticket(
 def update_status(
     ticket_id: uuid.UUID,
     data: UpdateStatusRequest,
+    background_tasks: BackgroundTasks,
+    request: Request,
     current_user: User = Depends(get_current_user),
     service: TicketService = Depends(get_ticket_service),
 ):
-    return service.update_status(current_user, ticket_id, data.status)
+    return service.update_status(
+        current_user, ticket_id, data.status, background_tasks, request.client.host
+    )
 
+@router.patch("/{ticket_id}/assign", response_model=TicketResponse)
+def assign_ticket(
+    ticket_id: uuid.UUID,
+    data: AssignTicketRequest,
+    background_tasks: BackgroundTasks,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    service: TicketService = Depends(get_ticket_service),
+):
+    return service.assign_ticket(
+        current_user, ticket_id, data.agent_id, background_tasks, request.client.host
+    )
 
 @router.delete("/{ticket_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_ticket(

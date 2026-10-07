@@ -2,7 +2,7 @@ from fastapi import FastAPI
 
 from app.core.config import settings
 from app.core.exceptions import register_exception_handlers
-from app.routes import auth, users, categories, tickets, comments, attachments
+from app.routes import auth, users, categories, tickets, comments, attachments, notifications
 
 
 app = FastAPI(
@@ -21,6 +21,7 @@ app.include_router(categories.router, prefix=API_V1_PREFIX)
 app.include_router(tickets.router, prefix=API_V1_PREFIX)
 app.include_router(comments.router, prefix=API_V1_PREFIX)
 app.include_router(attachments.router, prefix=API_V1_PREFIX)
+app.include_router(notifications.router, prefix=API_V1_PREFIX)
 
 @app.get("/health")
 def health_check() -> dict[str, str]:

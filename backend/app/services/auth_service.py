@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.enums import UserRole
+from app.core.enums import AuditAction, UserRole
 from app.core.exceptions import (
     ConflictException,
     ForbiddenException,
@@ -20,6 +20,7 @@ from app.models.user import User
 from app.repositories.refresh_token_repository import RefreshTokenRepository
 from app.repositories.user_repository import UserRepository
 from app.schemas.auth import RegisterRequest, TokenResponse
+from app.services.audit_service import AuditService
 
 
 class AuthService:
@@ -27,6 +28,7 @@ class AuthService:
         self.db = db
         self.user_repo = UserRepository(db)
         self.token_repo = RefreshTokenRepository(db)
+        self.audit_service  = AuditService(db)
 
     # ---------- public methods ----------
 
@@ -51,15 +53,29 @@ class AuthService:
         # Same error for "no such user" and "wrong password" so attackers
         # can't discover which emails exist.
         if user is None or not verify_password(password, user.hashed_password):
+            self.audit_service.log(
+                action=AuditAction.FAILED_LOGIN,
+                entity="user",
+                entity_id=email,  # log the attempted email even if no such user exists
+                ip_address=ip_address,
+            )
+            self.db.commit()  # commit the audit row even though login itself failed
             raise UnauthorizedException("Invalid email or password", "INVALID_CREDENTIALS")
-
+        
         if not user.is_active:
             raise ForbiddenException("This account is deactivated", "ACCOUNT_INACTIVE")
 
         tokens = self._issue_tokens(user)
+        self.audit_service.log(
+            action=AuditAction.LOGIN,
+            entity="user",
+            entity_id=str(user.id),
+            user_id=user.id,
+            ip_address=ip_address,
+        )
         self.db.commit()
         return tokens
-
+    
     def refresh(self, refresh_token: str) -> TokenResponse:
         payload = decode_token(refresh_token)
         if payload is None or payload.get("type") != "refresh":
