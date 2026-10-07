@@ -14,6 +14,13 @@ class TicketStatus(StrEnum):
     CLOSED = "closed"
 
 
+VALID_STATUS_TRANSITIONS: dict[TicketStatus, set[TicketStatus]] = {
+    TicketStatus.OPEN: {TicketStatus.IN_PROGRESS},
+    TicketStatus.IN_PROGRESS: {TicketStatus.RESOLVED, TicketStatus.OPEN},
+    TicketStatus.RESOLVED: {TicketStatus.CLOSED, TicketStatus.IN_PROGRESS},  # reopen = back to IN_PROGRESS
+    TicketStatus.CLOSED: set(),  # terminal state — no transitions out
+}
+
 class TicketPriority(StrEnum):
     LOW = "low"
     MEDIUM = "medium"
@@ -44,3 +51,4 @@ class AuditAction(StrEnum):
     COMMENT_ADDED = "comment_added"
     ATTACHMENT_UPLOADED = "attachment_uploaded"
     TICKET_CLOSED = "ticket_closed"
+
