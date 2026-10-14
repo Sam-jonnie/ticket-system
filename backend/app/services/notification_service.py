@@ -1,13 +1,38 @@
-# app/services/notification_service.py
+import logging
 import uuid
 
 from fastapi import BackgroundTasks
-from sqlalchemy import func, select, update
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.core.enums import NotificationType
 from app.core.exceptions import NotFoundException
 from app.models.notification import Notification
+from app.models.user import User
+
+logger = logging.getLogger(__name__)
+
+
+def queue_email(to_email: str, subject: str, body: str) -> None:
+    """
+    Hands the email to Celery. Never raises: if Redis is down or email is
+    disabled, the notification itself still exists in the DB, and a failed
+    email must never break the request that triggered it.
+    """
+    from app.core.config import settings
+
+    if not settings.email_enabled:
+        return
+    try:
+        from app.tasks.email_tasks import send_email_task
+
+        send_email_task.delay(to_email, subject, body)
+    except Exception:
+        logger.exception("Could not queue email to %s", to_email)
+
+
+def email_subject(notif_type: NotificationType) -> str:
+    return f"[Support] {notif_type.value.replace('_', ' ').title()}"
 
 
 class NotificationService:
@@ -21,7 +46,10 @@ class NotificationService:
         message: str,
         ticket_id: uuid.UUID | None = None,
     ) -> None:
+        """Runs inside BackgroundTasks, after the HTTP response was sent.
+        Opens its own session so it doesn't depend on the request's session."""
         from app.core.database import SessionLocal
+
         db = SessionLocal()
         try:
             notification = Notification(
@@ -29,9 +57,36 @@ class NotificationService:
             )
             db.add(notification)
             db.commit()
+            db.refresh(notification)
+
+            user = db.get(User, user_id)
+            if user is not None:
+                queue_email(user.email, email_subject(notif_type), message)
+
+            try:
+                self._push_via_websocket(notification)
+            except Exception:
+                logger.exception("WebSocket push failed for notification %s", notification.id)
         finally:
             db.close()
-            
+
+    def _push_via_websocket(self, notification: Notification) -> None:
+        import asyncio
+
+        from app.core.ws_manager import manager
+
+        asyncio.run(
+            manager.send_to_user(
+                notification.user_id,
+                {
+                    "id": str(notification.id),
+                    "type": notification.type.value,
+                    "message": notification.message,
+                    "ticket_id": str(notification.ticket_id) if notification.ticket_id else None,
+                },
+            )
+        )
+
     def queue_notification(
         self,
         background_tasks: BackgroundTasks,
@@ -40,17 +95,9 @@ class NotificationService:
         message: str,
         ticket_id: uuid.UUID | None = None,
     ) -> None:
-        """
-        Called from within a request's service layer. Doesn't write
-        to the DB immediately — schedules the write to happen after
-        the response is returned, so creating a ticket doesn't make
-        the customer wait on notification-row writes.
-        """
-        background_tasks.add_task(
-            self._create_sync, user_id, notif_type, message, ticket_id
-        )
+        background_tasks.add_task(self._create_sync, user_id, notif_type, message, ticket_id)
 
-    # ---------- read-side: these run in normal request flow, not background ----------
+    # ---------- read side ----------
 
     def list_for_user(self, user_id: uuid.UUID, unread_only: bool = False) -> list[Notification]:
         query = select(Notification).where(Notification.user_id == user_id)

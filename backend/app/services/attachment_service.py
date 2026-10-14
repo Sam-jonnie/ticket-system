@@ -11,6 +11,8 @@ from app.repositories.attachment_repository import AttachmentRepository
 from app.services.ticket_service import TicketService
 from app.utils.file_storage import delete_file, save_file
 from app.utils.file_validation import validate_attachment
+from app.core.enums import AuditAction, UserRole
+from app.services.audit_service import AuditService
 
 
 class AttachmentService:
@@ -18,6 +20,7 @@ class AttachmentService:
         self.db = db
         self.repo = AttachmentRepository(db)
         self.ticket_service = TicketService(db)
+        self.audit_service = AuditService(db)
 
     def upload_attachment(
         self,
@@ -25,8 +28,9 @@ class AttachmentService:
         ticket_id: uuid.UUID,
         file_bytes: bytes,
         original_filename: str,
+        ip_address: str | None = None,
     ) -> TicketAttachment:
-        ticket = self.ticket_service.get_ticket(current_user, ticket_id)  # 404/403 as needed
+        ticket = self.ticket_service.get_ticket(current_user, ticket_id)
 
         try:
             detected_mime_type = validate_attachment(file_bytes, original_filename)
@@ -44,6 +48,15 @@ class AttachmentService:
             storage_path=storage_path,
         )
         self.repo.create(attachment)
+        self.audit_service.log(
+            action=AuditAction.ATTACHMENT_UPLOADED,
+            entity="ticket",
+            entity_id=str(ticket.id),
+            user_id=current_user.id,
+            ip_address=ip_address,
+            metadata={"file_name": original_filename, "file_type": detected_mime_type,
+                      "file_size": len(file_bytes)},
+        )
         self.db.commit()
         attachment.uploaded_by = current_user
         return attachment

@@ -1,4 +1,6 @@
 import uuid
+import csv
+import io
 from datetime import datetime
 
 from fastapi import BackgroundTasks
@@ -22,9 +24,26 @@ from app.repositories.user_repository import UserRepository
 from app.schemas.ticket import CreateTicketRequest, UpdateTicketRequest
 from app.services.audit_service import AuditService
 from app.services.notification_service import NotificationService
-from app.utils.sla import calculate_due_date
+from app.utils.sla import calculate_due_date, is_overdue
 from app.utils.ticket_number import generate_ticket_number
 
+MAX_EXPORT_ROWS = 5000
+CSV_HEADERS = [
+    "ticket_number", "title", "status", "priority", "category",
+    "customer_name", "customer_email", "assigned_agent",
+    "due_date", "overdue", "created_at",
+]
+
+
+def _safe_cell(value: str) -> str:
+    """
+    CSV injection guard: Excel treats cells starting with = + - @ as formulas.
+    Prefixing a single quote makes it plain text, so a malicious ticket title
+    like '=HYPERLINK(...)' can't run when an admin opens the export.
+    """
+    if value and value[0] in ("=", "+", "-", "@"):
+        return "'" + value
+    return value
 
 class TicketService:
     def __init__(self, db: Session) -> None:
@@ -142,7 +161,11 @@ class TicketService:
     # ---------- update ----------
 
     def update_ticket(
-        self, current_user: User, ticket_id: uuid.UUID, data: UpdateTicketRequest
+        self,
+        current_user: User,
+        ticket_id: uuid.UUID,
+        data: UpdateTicketRequest,
+        ip_address: str | None = None,
     ) -> Ticket:
         ticket = self.get_ticket(current_user, ticket_id)
 
@@ -150,23 +173,37 @@ class TicketService:
             raise BadRequestException("Closed tickets cannot be modified", "TICKET_CLOSED")
 
         raw = self.ticket_repo.get_raw_by_id(ticket_id)
+        changed_fields: list[str] = []
 
         if data.title is not None:
             raw.title = data.title
+            changed_fields.append("title")
         if data.description is not None:
             raw.description = data.description
+            changed_fields.append("description")
         if data.category_id is not None:
             category = self.category_repo.get_by_id(data.category_id)
             if category is None:
                 raise NotFoundException("Category not found", "CATEGORY_NOT_FOUND")
             raw.category_id = category.id
+            changed_fields.append("category")
         if data.priority_name is not None:
             priority = self.priority_repo.get_by_name(data.priority_name)
             if priority is None:
                 raise NotFoundException("Priority not found", "PRIORITY_NOT_FOUND")
             raw.priority_id = priority.id
             raw.due_date = calculate_due_date(priority, raw.created_at)
+            changed_fields.append("priority")
 
+        if changed_fields:
+            self.audit_service.log(
+                action=AuditAction.TICKET_UPDATED,
+                entity="ticket",
+                entity_id=str(ticket_id),
+                user_id=current_user.id,
+                ip_address=ip_address,
+                metadata={"fields": changed_fields},
+            )
         self.db.commit()
         return self.ticket_repo.get_by_id(ticket_id)
 
@@ -297,6 +334,55 @@ class TicketService:
         self.db.delete(raw)
         self.db.commit()
 
+    def export_tickets_csv(
+        self,
+        current_user: User,
+        search: str | None,
+        status_filter: TicketStatus | None,
+        priority_filter: TicketPriority | None,
+        category_id: uuid.UUID | None,
+        assigned_agent_id: uuid.UUID | None,
+        customer_id: uuid.UUID | None,
+        date_from: datetime | None,
+        date_to: datetime | None,
+        sort_by: str,
+        sort_order: str,
+    ) -> str:
+        # Reuses list_tickets, so role-based visibility applies automatically.
+        tickets, _ = self.list_tickets(
+            current_user=current_user,
+            page=1,
+            page_size=MAX_EXPORT_ROWS,
+            search=search,
+            status_filter=status_filter,
+            priority_filter=priority_filter,
+            category_id=category_id,
+            assigned_agent_id=assigned_agent_id,
+            customer_id=customer_id,
+            date_from=date_from,
+            date_to=date_to,
+            sort_by=sort_by,
+            sort_order=sort_order,
+        )
+
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(CSV_HEADERS)
+        for t in tickets:
+            writer.writerow([
+                t.ticket_number,
+                _safe_cell(t.title),
+                t.status.value,
+                t.priority.name.value,
+                _safe_cell(t.category.name),
+                _safe_cell(t.customer.name),
+                t.customer.email,
+                _safe_cell(t.assigned_agent.name) if t.assigned_agent else "",
+                t.due_date.isoformat() if t.due_date else "",
+                "yes" if is_overdue(t.due_date, t.status.value) else "no",
+                t.created_at.isoformat(),
+            ])
+        return buffer.getvalue()
     # ---------- private ----------
 
     def _check_can_view(self, current_user: User, ticket: Ticket) -> None:

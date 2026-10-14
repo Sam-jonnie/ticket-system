@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends, UploadFile, status
+from fastapi import APIRouter, Depends, UploadFile, status, Request
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
@@ -16,7 +16,6 @@ router = APIRouter(tags=["Attachments"])
 def get_attachment_service(db: Session = Depends(get_db)) -> AttachmentService:
     return AttachmentService(db)
 
-
 @router.post(
     "/tickets/{ticket_id}/attachments",
     response_model=AttachmentResponse,
@@ -25,12 +24,14 @@ def get_attachment_service(db: Session = Depends(get_db)) -> AttachmentService:
 async def upload_attachment(
     ticket_id: uuid.UUID,
     file: UploadFile,
+    request: Request,
     current_user: User = Depends(get_current_user),
     service: AttachmentService = Depends(get_attachment_service),
 ):
     file_bytes = await file.read()
-    return service.upload_attachment(current_user, ticket_id, file_bytes, file.filename)
-
+    return service.upload_attachment(
+        current_user, ticket_id, file_bytes, file.filename, request.client.host
+    )
 
 @router.get("/tickets/{ticket_id}/attachments", response_model=list[AttachmentResponse])
 def list_attachments(

@@ -19,7 +19,14 @@ class Settings(BaseSettings):
     )
 
     redis_url: str = "redis://localhost:6379/0"
-
+    rate_limit_enabled: bool = True
+    email_enabled: bool = False
+    email_from: str = "support@ticket-system.local"
+    smtp_host: str = "localhost"
+    smtp_port: int = 1025
+    smtp_username: str | None = None
+    smtp_password: str | None = None
+    smtp_use_tls: bool = False
 
 @lru_cache
 def get_settings() -> Settings:

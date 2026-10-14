@@ -28,11 +28,11 @@ class AuthService:
         self.db = db
         self.user_repo = UserRepository(db)
         self.token_repo = RefreshTokenRepository(db)
-        self.audit_service  = AuditService(db)
+        self.audit_service = AuditService(db)
 
     # ---------- public methods ----------
 
-    def register(self, data: RegisterRequest) -> User:
+    def register(self, data: RegisterRequest, ip_address: str | None = None) -> User:
         email = data.email.lower()
         if self.user_repo.get_by_email(email) is not None:
             raise ConflictException("Email is already registered", "EMAIL_ALREADY_EXISTS")
@@ -44,10 +44,19 @@ class AuthService:
             role=UserRole.CUSTOMER,  # public signup is ALWAYS customer
         )
         self.user_repo.create(user)
+
+        self.audit_service.log(
+            action=AuditAction.USER_CREATED,
+            entity="user",
+            entity_id=str(user.id),
+            user_id=user.id,
+            ip_address=ip_address,
+            metadata={"email": email, "via": "self_registration"},
+        )
         self.db.commit()
         return user
 
-    def login(self, email: str, password: str) -> TokenResponse:
+    def login(self, email: str, password: str, ip_address: str | None = None) -> TokenResponse:
         user = self.user_repo.get_by_email(email.lower())
 
         # Same error for "no such user" and "wrong password" so attackers
@@ -56,12 +65,12 @@ class AuthService:
             self.audit_service.log(
                 action=AuditAction.FAILED_LOGIN,
                 entity="user",
-                entity_id=email,  # log the attempted email even if no such user exists
+                entity_id=email,  # the attempted email, even if no such user exists
                 ip_address=ip_address,
             )
-            self.db.commit()  # commit the audit row even though login itself failed
+            self.db.commit()  # must commit here: raising below skips the normal commit
             raise UnauthorizedException("Invalid email or password", "INVALID_CREDENTIALS")
-        
+
         if not user.is_active:
             raise ForbiddenException("This account is deactivated", "ACCOUNT_INACTIVE")
 
@@ -75,7 +84,7 @@ class AuthService:
         )
         self.db.commit()
         return tokens
-    
+
     def refresh(self, refresh_token: str) -> TokenResponse:
         payload = decode_token(refresh_token)
         if payload is None or payload.get("type") != "refresh":

@@ -6,6 +6,8 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from slowapi.errors import RateLimitExceeded
+
 
 logger = logging.getLogger(__name__)
 
@@ -87,9 +89,17 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
         "An unexpected error occurred",
     )
 
+async def rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
+    return _error_response(
+        status.HTTP_429_TOO_MANY_REQUESTS,
+        "RATE_LIMIT_EXCEEDED",
+        "Too many requests. Please slow down and try again shortly.",
+    )
+
 
 def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(AppException, app_exception_handler)
     app.add_exception_handler(StarletteHTTPException, http_exception_handler)
     app.add_exception_handler(RequestValidationError, validation_exception_handler)
     app.add_exception_handler(Exception, unhandled_exception_handler)
+    app.add_exception_handler(RateLimitExceeded, rate_limit_handler)

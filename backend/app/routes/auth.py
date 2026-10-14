@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.deps import get_current_user
+from app.core.rate_limit import limiter
 from app.models.user import User
 from app.schemas.auth import (
     ChangePasswordRequest,
@@ -23,13 +24,23 @@ def get_auth_service(db: Session = Depends(get_db)) -> AuthService:
 
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-def register(data: RegisterRequest, service: AuthService = Depends(get_auth_service)):
-    return service.register(data)
+@limiter.limit("10/minute")
+def register(
+    request: Request,
+    data: RegisterRequest,
+    service: AuthService = Depends(get_auth_service),
+):
+    return service.register(data, request.client.host)
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(data: LoginRequest, service: AuthService = Depends(get_auth_service)):
-    return service.login(data.email, data.password)
+@limiter.limit("5/minute")
+def login(
+    request: Request,
+    data: LoginRequest,
+    service: AuthService = Depends(get_auth_service),
+):
+    return service.login(data.email, data.password, request.client.host)
 
 
 @router.post("/refresh", response_model=TokenResponse)

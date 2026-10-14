@@ -1,3 +1,10 @@
+x-app-environment: &app-environment
+  # Inside Docker, services find each other by service name, not localhost
+  DATABASE_URL: postgresql+psycopg://ticket_user:ticket_pass@postgres:5432/ticket_system
+  REDIS_URL: redis://redis:6379/0
+  SMTP_HOST: mailpit
+  SMTP_PORT: "1025"
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -31,6 +38,79 @@ services:
       timeout: 5s
       retries: 5
 
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: ticket_system_mailpit
+    restart: unless-stopped
+    ports:
+      - "1025:1025"   # SMTP the app sends to
+      - "8025:8025"   # web inbox: http://localhost:8025
+
+  # One-shot job: applies Alembic migrations, then exits
+  migrate:
+    build: .
+    image: ticket-system-backend
+    container_name: ticket_system_migrate
+    env_file: .env
+    environment: *app-environment
+    command: alembic upgrade head
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build: .
+    image: ticket-system-backend
+    container_name: ticket_system_api
+    restart: unless-stopped
+    env_file: .env
+    environment: *app-environment
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    volumes:
+      - uploads:/app/uploads
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  worker:
+    build: .
+    image: ticket-system-backend
+    container_name: ticket_system_worker
+    restart: unless-stopped
+    env_file: .env
+    environment: *app-environment
+    command: celery -A app.core.celery_app worker --loglevel=info
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  beat:
+    build: .
+    image: ticket-system-backend
+    container_name: ticket_system_beat
+    restart: unless-stopped
+    env_file: .env
+    environment: *app-environment
+    command: celery -A app.core.celery_app beat --loglevel=info --schedule /tmp/celerybeat-schedule
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
 volumes:
   pgdata:
   redisdata:
+  uploads:

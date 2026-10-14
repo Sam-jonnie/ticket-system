@@ -37,7 +37,8 @@ class NotificationType(StrEnum):
     TICKET_RESOLVED = "ticket_resolved"
     TICKET_CLOSED = "ticket_closed"
     SLA_BREACHED = "sla_breached"
-
+    SLA_WARNING = "sla_warning"
+    SLA_ESCALATED = "sla_escalated"
 
 class AuditAction(StrEnum):
     LOGIN = "login"

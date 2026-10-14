@@ -1,6 +1,6 @@
-from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request, status, Response
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
@@ -10,6 +10,7 @@ from app.core.deps import get_current_user
 from app.core.enums import TicketPriority, TicketStatus
 from app.models.user import User
 from app.schemas.ticket import (
+    AssignTicketRequest,
     CreateTicketRequest,
     PaginatedTickets,
     TicketResponse,
@@ -74,6 +75,31 @@ def list_tickets(
         page_size=page_size,
     )
 
+@router.get("/export")
+def export_tickets(
+    search: str | None = None,
+    status_: TicketStatus | None = Query(default=None, alias="status"),
+    priority: TicketPriority | None = None,
+    category_id: uuid.UUID | None = None,
+    assigned_agent: uuid.UUID | None = None,
+    customer: uuid.UUID | None = None,
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
+    sort_by: str = Query(default="created_at"),
+    sort_order: str = Query(default="desc", pattern="^(asc|desc)$"),
+    current_user: User = Depends(get_current_user),
+    service: TicketService = Depends(get_ticket_service),
+):
+    csv_text = service.export_tickets_csv(
+        current_user, search, status_, priority, category_id,
+        assigned_agent, customer, date_from, date_to, sort_by, sort_order,
+    )
+    filename = f"tickets_{datetime.now(timezone.utc):%Y%m%d_%H%M%S}.csv"
+    return Response(
+        content=csv_text,
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 @router.get("/{ticket_id}", response_model=TicketResponse)
 def get_ticket(
@@ -88,11 +114,11 @@ def get_ticket(
 def update_ticket(
     ticket_id: uuid.UUID,
     data: UpdateTicketRequest,
+    request: Request,
     current_user: User = Depends(get_current_user),
     service: TicketService = Depends(get_ticket_service),
 ):
-    return service.update_ticket(current_user, ticket_id, data)
-
+    return service.update_ticket(current_user, ticket_id, data, request.client.host)
 
 @router.patch("/{ticket_id}/status", response_model=TicketResponse)
 def update_status(

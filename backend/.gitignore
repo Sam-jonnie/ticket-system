@@ -40,3 +40,10 @@ dist/
 build/
 
 uploads/
+
+celerybeat-schedule*
+
+uploads/
+.pytest_cache/
+.coverage
+htmlcov/

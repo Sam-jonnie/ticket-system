@@ -1,10 +1,12 @@
 import uuid
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy.orm import Session
 
 from app.core.enums import AuditAction
 from app.models.audit_log import AuditLog
+from app.repositories.audit_log_repository import AuditLogRepository
 
 
 class AuditService:
@@ -21,11 +23,9 @@ class AuditService:
         metadata: dict[str, Any] | None = None,
     ) -> None:
         """
-        Writes an audit row. Deliberately does NOT call db.commit() —
-        audit logging piggybacks on whatever transaction the calling
-        service is already in, so a ticket-update + its audit log
-        either both succeed or both roll back together. Never call
-        this after the caller's own commit().
+        Writes an audit row. Deliberately does NOT commit: audit logging joins
+        the caller's transaction, so an action and its audit row succeed or
+        fail together. Always call this BEFORE the caller's own commit().
         """
         entry = AuditLog(
             user_id=user_id,
@@ -36,3 +36,18 @@ class AuditService:
             metadata_=metadata,
         )
         self.db.add(entry)
+
+    def list_logs(
+        self,
+        page: int,
+        page_size: int,
+        action: AuditAction | None = None,
+        user_id: uuid.UUID | None = None,
+        entity: str | None = None,
+        entity_id: str | None = None,
+        date_from: datetime | None = None,
+        date_to: datetime | None = None,
+    ) -> tuple[list[AuditLog], int]:
+        return AuditLogRepository(self.db).list_paginated(
+            page, page_size, action, user_id, entity, entity_id, date_from, date_to
+        )

@@ -10,6 +10,7 @@ from app.models.category import Category
 from app.models.priority import Priority
 from app.models.ticket import Ticket
 from app.models.user import User
+from app.models.ticket_status_history import TicketStatusHistory
 
 
 class TicketRepository:
@@ -54,6 +55,32 @@ class TicketRepository:
         self.db.flush()
         return ticket
 
+    def record_history(
+        self,
+        ticket_id: uuid.UUID,
+        changed_by_id: uuid.UUID,
+        old_status: TicketStatus | None = None,
+        new_status: TicketStatus | None = None,
+        old_agent_id: uuid.UUID | None = None,
+        new_agent_id: uuid.UUID | None = None,
+    ) -> None:
+        """
+        Appends one row to ticket_status_history. A row records EITHER a status
+        change (old_status/new_status) OR an assignment change
+        (old_agent_id/new_agent_id). Doesn't commit: the service commits it
+        together with the change it describes.
+        """
+        self.db.add(
+            TicketStatusHistory(
+                ticket_id=ticket_id,
+                changed_by_id=changed_by_id,
+                old_status=old_status,
+                new_status=new_status,
+                old_agent_id=old_agent_id,
+                new_agent_id=new_agent_id,
+            )
+        )
+        
     def list_paginated(
         self,
         page: int,
